@@ -1,9 +1,11 @@
 
 /*
 
-// WARNING: this is experimental. It is not block accurate, due to OSC communication
-// Besides, it will accumulate memory when you don't recompile for a long time.
-// But it works reasonaly.
+// WARNING: on older versions of sc, there is a (usually small) memory leak.
+// This is experimental. It is not block accurate, due to OSC communication
+// But it works reasonably well.
+
+
 
 { Sequencer.kr({ 100.rand }, Impulse.kr(10)).poll }.play;
 { Sequencer.kr({ |mx| mx.rand }, Impulse.kr(10), MouseX.kr(0, 100)).poll }.play;
@@ -15,52 +17,108 @@
 ).poll }.play;
 )
 
+b = Buffer.alloc(s, 1000);
+(
+{ 
+	var str = Pseq([0, 1], inf).asStream, 
+	t = Impulse.ar(100), 
+	seq = Sequencer.ar({ str.next }, t); 
+	RecordBuf.ar([seq, t], b, loop: 0); 
+	
+	Line.kr(1, 0, 1, doneAction:2) 
+}.play;
+)
+
+b.plot;
+
+// control rate
+(
+{
+	var t = Impulse.kr(2.3);
+	var str = (Pseq([0, 12], inf) + Pstutter(Prand([2, 5], inf), Pwhite(60, 70, inf))).asStream;
+	var freq = Sequencer.kr({ str.next }, t).midicps;
+	SinOsc.ar(freq) * 0.2 + (Decay.kr(t, 0.01) * PinkNoise.ar(2))
+}.play;
+)
+
+// audio rate
+(
+{
+	var t = Impulse.ar(MouseX.kr(2, 100, 1));
+	var str = (Pseq([0, 12], inf) + Pstutter(Prand([2, 5], inf), Pwhite(60, 70, inf))).asStream;
+	var freq = Sequencer.ar({ str.next }, t).midicps;
+	SinOsc.ar(freq) * 0.2 + (Decay.ar(t, 0.01) * PinkNoise.ar(2))
+}.play;
+)
 
 */
 
-// todo: 
-// remove funcs (avoid memory leak)
-// multichannelExpand
 
+
+
+SynthDefResources {
+	classvar <all, responder;
+	
+	*initClass {
+		all = IdentityDictionary.new;
+	}
+	
+	*makeResponder {
+		if(responder.isNil) {
+			responder = OSCFunc({ |msg, time, addr| this.remove(msg[1], addr) }, "/d_end").fix
+		}
+	}
+	
+	*add { |defName, func|
+		this.makeResponder;
+		all[defName] = all[defName].addFunc(func)
+	}
+	
+	*remove { |defName, addr|
+		all.removeAt(defName).value(addr)
+	}
+}
 
 
 Sequencer {
 	
 	classvar <functions;
-	classvar langID, responder, cmd; 
-	classvar defLookUp;	
+	classvar cmd, responder;
 	
 	*initClass {
-		langID = inf.asInteger.rand; // make sure to look up function in the right client
-		functions = IdentityDictionary.new;
-		defLookUp = IdentityDictionary.new;
+		var langID = inf.asInteger.rand; // make sure to look up function in the right client
 		cmd = "/sequencer" ++ langID;
+		functions = IdentityDictionary.new;
 	}
 	
+	// todo: multichannelExpand
+
 	*kr { |func, trig, args|
-		
+		^this.new(\control, func, trig, args)	
+	}
+	
+	*ar { |func, trig, args|
+		^this.new(\audio, func, trig, args)	
+	}
+	
+	*new { |rate, func, trig, args|
 		var name = UGen.buildSynthDef.name.asSymbol;
 		var replyID = UniqueID.next;
 		
 		functions[replyID] = func;
-		//defLookUp[name] = defLookUp[name].add(replyID);
+		SynthDefResources.add(name, { functions.removeAt(replyID) });
 		
-		this.makeResponder;
-		//this.cleanFunctions;
+		this.makeResponders(cmd);
 		
-		SendReply.kr(trig, cmd, args, replyID);
-		^NamedControl.kr("sequencer_in_" ++ replyID, 0.0 ! args.size.max(1));
-	}
-	
-	*cleanFunctions {
-		// unfortunately there is currently no way of knowing that a SynthDef has been removed.
-		// otherwise, a responder could look up the ids and remove them.
-	}
-	
-	*makeResponder {
-		if(responder.isNil) {
-			responder = OSCFunc({ |msg, time, addr| this.respond(msg, addr) }, cmd).fix
-		}	
+		SendReply.perform(
+			UGen.methodSelectorForRate(rate), 
+			trig, cmd, args, replyID
+		);
+		
+		^NamedControl.perform(
+			UGen.methodSelectorForRate(rate), 
+			"sequencer_in_" ++ replyID, 0.0 ! args.size.max(1)
+		);
 	}
 	
 	*respond { |msg, addr|
@@ -74,7 +132,14 @@ Sequencer {
 		}
 	}
 	
+	*makeResponders { |cmd|
+		if(responder.isNil) {
+			responder = OSCFunc({ |msg, time, addr| this.respond(msg, addr) }, cmd).fix;
+		}
+	}
+
 }
+
 
 /*
 
@@ -84,6 +149,7 @@ Sequencer {
 { Sequencer.kr({ 100.rand }, Impulse.kr(MouseX.kr(0, 1000))) }.play;
 
 Sequencer.functions
+SynthDefResources.all
 */
 
 
