@@ -65,7 +65,7 @@ SynthDefResources {
 	
 	*makeResponder {
 		if(responder.isNil) {
-			responder = OSCFunc({ |msg, time, addr| this.remove(msg[1], addr) }, "/d_end").fix
+			responder = OSCFunc({ |msg, time, addr| this.remove(msg[1], addr) }, "/d_removed").fix
 		}
 	}
 	
